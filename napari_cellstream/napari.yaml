@@ -1,0 +1,15 @@
+## napari_cellstream/napari.yaml
+
+name: napari_cellstream
+display_name: Spectral Analyzer
+
+contributions:
+  commands:
+    - id: napari_cellstream.make_spectral_widget
+      python_name: napari_cellstream._plugin:make_spectral_widget
+      title: Spectral Viewer Widget
+  widgets:
+    - command: napari_cellstream.make_spectral_widget
+      display_name: Spectral Viewer
+      autogenerate: false
+
