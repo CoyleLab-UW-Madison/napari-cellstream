@@ -11,10 +11,12 @@ import numpy as np
 from qtpy.QtWidgets import (QWidget, QVBoxLayout, QPushButton, QLabel, 
                            QComboBox, QSpinBox, QCheckBox, QHBoxLayout,
                            QGroupBox, QDoubleSpinBox, QFormLayout)
+
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from ssqueezepy import cwt
-
+from ._fft_widget import fft_gui_widget
+from ._cwt_widget import generate_cwt_features_widget
 
 # Define wavelet parameters with default values and ranges
 WAVELET_PARAMS = {
@@ -38,9 +40,10 @@ WAVELET_PARAMS = {
             }}
 
 class SpectralWidget(QWidget):
-    def __init__(self, napari_viewer):
+    def __init__(self, napari_viewer,use_gpu=False):
         super().__init__()
         self.viewer = napari_viewer
+        self.use_gpu=use_gpu
         self.cid = None
         self.canvas = None
         self.last_x = None
@@ -68,16 +71,81 @@ class SpectralWidget(QWidget):
         # Plot container
         self.plot_container = QWidget()
         self.plot_container.setLayout(QVBoxLayout())
+        self.plot_container.setMinimumSize(600, 400)
+        
+        #fft widget 
+        self.fft_gui = fft_gui_widget
+        self.fft_gui.called.connect(self.handle_fft_result)
+        self.plot_container.layout().addWidget(self.fft_gui.native)
+        
+        fft_group = QGroupBox("Generate FFT features")
+        fft_layout = QVBoxLayout()
+        fft_layout.addWidget(self.fft_gui.native)
+        fft_group.setLayout(fft_layout)
+
+        #cwt widget 
+        self.cwt_gui = generate_cwt_features_widget
+        self.cwt_gui.use_gpu.value=self.use_gpu
+        self.cwt_gui.called.connect(self.handle_cwt_result)
+        self.plot_container.layout().addWidget(self.cwt_gui.native)
+        
+        cwt_group = QGroupBox("Generate CWT features")
+        cwt_layout = QVBoxLayout()
+        cwt_layout.addWidget(self.cwt_gui.native)
+        cwt_group.setLayout(cwt_layout)
         
         # Main layout
-        layout = QVBoxLayout()
-        layout.addWidget(self.controls_group)
-        layout.addWidget(self.activate_button)
-        layout.addWidget(self.status_label)
-        layout.addWidget(self.plot_container)
-        self.setLayout(layout)
+        # layout = QVBoxLayout()
+        # layout.addWidget(self.controls_group)
+        # layout.addWidget(self.activate_button)
+        # layout.addWidget(self.status_label)
+        # layout.addWidget(self.plot_container)
+        # self.setLayout(layout)
+        
+        # Left column: Controls
+        left_panel = QWidget()
+        left_layout = QVBoxLayout()
+        left_panel.setLayout(left_layout)
+        
+        left_layout.addWidget(self.controls_group)
+        #left_layout.addWidget(self.activate_button)
+        #left_layout.addWidget(self.status_label)
+        left_layout.addWidget(fft_group)
+        left_layout.addWidget(cwt_group)
+        
+        # Right column: Plots
+        right_panel = self.plot_container  # already a QWidget with a VBoxLayout
+        
+        # Main layout: horizontal split
+        main_layout = QHBoxLayout()
+        main_layout.addWidget(left_panel)
+        main_layout.addWidget(right_panel)
+        self.setLayout(main_layout)
         
         self.toggle_activation(True)
+
+    def handle_fft_result(self, result):
+        if not isinstance(result, dict):
+            print("FFT did not return a valid result")
+            return
+
+        for key, data in result.items():
+            name = f"FFT_{key}"
+            if isinstance(data, torch.Tensor):
+                data = data.cpu().numpy()
+            self.viewer.add_image(data, name=name)
+
+    def handle_cwt_result(self,results):
+        # Add results to Napari viewer
+        for chan, feature_dict in results.items():
+            for feat_name, feat_tensor in feature_dict.items():
+                layer_name = f"cwt_c{chan}_{feat_name}"
+                self.viewer.add_image(
+                    feat_tensor.numpy(),  # already (T, num_filter_banks, X, Y)
+                    name=layer_name,
+                    scale=[20,1,1],
+                    metadata={"source": "cwt", "channel": chan, "feature": feat_name}
+            )
 
     def create_controls(self):
         """Create the parameter controls"""
@@ -245,10 +313,12 @@ class SpectralWidget(QWidget):
             self.plot_container.layout().removeWidget(self.canvas)
             self.canvas.deleteLater()
             self.canvas = None
-        
+       
+       # print("Initializing plots...")
         plt.style.use('dark_background')
         # Create new figure
-        fig = Figure(figsize=(8, 8), tight_layout=True)
+        fig = Figure(figsize=(8, 8))
+        fig.set_layout_engine(None)
         self.canvas = FigureCanvas(fig)
         self.plot_container.layout().addWidget(self.canvas)
         
@@ -264,12 +334,14 @@ class SpectralWidget(QWidget):
             ts -= np.mean(ts)
             
             # Time domain plot
+            #print("Plotting time domain")
             ax = axes[0, c] if C > 1 else axes[0, 0]
             ax.clear()
             ax.plot(ts)
             ax.set_title(f"Channel {c} - Time Domain" if C > 1 else "Time Domain")
             ax.set_xlabel("Time")
             
+            #print("Plotting freq domain")
             # Frequency domain plot
             ax = axes[1, c] if C > 1 else axes[1, 0]
             ax.clear()
@@ -290,21 +362,28 @@ class SpectralWidget(QWidget):
             # Get wavelet tuple with current parameters
             wavelet_tuple = self.get_wavelet_tuple()
             
+            #print("Plotting cwt domain")
             # Compute CWT with the selected wavelet and parameters
             Wx, _ = cwt(ts, wavelet=wavelet_tuple, nv=self.nv)
-            cwt_mag = np.abs(Wx)
+
+            if isinstance(Wx, torch.Tensor):
+                cwt_mag = Wx.abs().cpu().numpy()
+            elif isinstance(Wx, np.ndarray):
+                cwt_mag = np.abs(Wx)
+
             if self.do_plot_zscore:
                 cwt_mag_mean=np.mean(cwt_mag,axis=0)
                 cwt_mag_std=np.std(cwt_mag,axis=0)
                 cwt_mag=(cwt_mag-cwt_mag_mean)/cwt_mag_std
            
-                
+           # print("Finalizing plots...")
             im = ax.imshow(cwt_mag, aspect='auto', origin='lower', cmap='viridis')
             ax.set_title(f"CWT: {wavelet_tuple[0]}")
             ax.set_xlabel("Time")
             ax.set_ylabel("Scale")
             #fig.colorbar(im, ax=ax)
-        
+            
+        fig.tight_layout()
         self.canvas.draw()
 
     def closeEvent(self, event):
