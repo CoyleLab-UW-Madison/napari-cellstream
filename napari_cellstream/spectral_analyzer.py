@@ -52,6 +52,11 @@ class SpectralWidget(QWidget):
         self.last_y = None
         self.last_layer = None
         
+        #timelines
+        self.current_time_index = 0
+        self.time_cursor_lines = []
+        self.viewer.dims.events.current_step.connect(self.update_time_cursor) #time line
+        
         # Default settings
         self.wavelet = "morlet"
         self.nv = 32
@@ -88,6 +93,7 @@ class SpectralWidget(QWidget):
         #cwt widget 
         self.cwt_gui = generate_cwt_features_widget
         self.cwt_gui.use_gpu.value=self.use_gpu
+        #self.cwt_gui.wavelet_tuple=self.get_wavelet_tuple() ##fix this later
         self.cwt_gui.called.connect(self.handle_cwt_result)
         self.plot_container.layout().addWidget(self.cwt_gui.native)
         
@@ -141,6 +147,11 @@ class SpectralWidget(QWidget):
         else:
             print("Invalid type")
             return
+        #check dimension -- insert dummy channel dimension if need by
+        if image.ndim==3:
+            image=np.expand_dims(image,axis=1)
+            print("Inserting channel dimension...")
+        
         self.viewer.add_image(image, name=iname)
         return
     
@@ -305,6 +316,18 @@ class SpectralWidget(QWidget):
             self.status_label.setText("Status: INACTIVE - Click button to activate")
             self.activate_button.setText("Activate Pixel Inspector")
 
+    def update_time_cursor(self, event=None):
+        if self.canvas is None or not hasattr(self, "time_cursor_lines"):
+            return
+    
+        current_t = self.viewer.dims.current_step[0]  # assumes time axis is 0
+        self.current_time_index = current_t
+    
+        for line in self.time_cursor_lines:
+            line.set_xdata([current_t])
+    
+        self.canvas.draw_idle()
+    
     def on_click(self, viewer, event):
         """Handle click events with Shift modifier"""
         if event.button != 1 or "Shift" not in event.modifiers:
@@ -377,6 +400,9 @@ class SpectralWidget(QWidget):
             ax.set_title(f"Channel {c} - Time Domain" if C > 1 else "Time Domain")
             ax.set_xlabel("Time")
             
+            cursor = ax.axvline(self.current_time_index, color='red', linestyle='dotted')
+            self.time_cursor_lines.append(cursor)
+
             #print("Plotting freq domain")
             # Frequency domain plot
             ax = axes[1, c] if C > 1 else axes[1, 0]
@@ -417,6 +443,10 @@ class SpectralWidget(QWidget):
             ax.set_title(f"CWT: {wavelet_tuple[0]}")
             ax.set_xlabel("Time")
             ax.set_ylabel("Scale")
+            
+            cursor = ax.axvline(self.current_time_index, color='red', linestyle='dotted')
+            self.time_cursor_lines.append(cursor)
+            
             #fig.colorbar(im, ax=ax)
             
         fig.tight_layout()
