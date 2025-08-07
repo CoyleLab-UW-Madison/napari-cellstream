@@ -380,7 +380,7 @@ class SpectralWidget(QWidget):
        # print("Initializing plots...")
         plt.style.use('dark_background')
         # Create new figure
-        fig = Figure(figsize=(8, 4))
+        fig = Figure(figsize=(6, 4))
         fig.set_layout_engine(None)
         self.canvas = FigureCanvas(fig)
         self.plot_container.layout().addWidget(self.canvas)
