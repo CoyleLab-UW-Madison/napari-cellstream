@@ -78,7 +78,7 @@ class SpectralWidget(QWidget):
         # Plot container
         self.plot_container = QWidget()
         self.plot_container.setLayout(QVBoxLayout())
-        self.plot_container.setMinimumSize(100, 100)
+        self.plot_container.setMinimumSize(50, 50)
         
         #fft widget 
         self.fft_gui = fft_gui_widget
@@ -376,7 +376,7 @@ class SpectralWidget(QWidget):
        # print("Initializing plots...")
         plt.style.use('dark_background')
         # Create new figure
-        fig = Figure(figsize=(8, 8))
+        fig = Figure(figsize=(1, 1))
         fig.set_layout_engine(None)
         self.canvas = FigureCanvas(fig)
         self.plot_container.layout().addWidget(self.canvas)
