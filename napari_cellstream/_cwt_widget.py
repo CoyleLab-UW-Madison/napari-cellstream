@@ -1,6 +1,7 @@
 from magicgui import magicgui
 from napari.types import ImageData
 from napari.layers import Image
+from napari import current_viewer
 from qtpy.QtWidgets import QWidget
 import torch
 import numpy as np
@@ -13,7 +14,7 @@ from cellstream.cwt.utils import generate_cwt_image_cellstreams
 )
 def generate_cwt_features_widget(
     #viewer: "napari.viewer.Viewer",
-    img_layer: Image,
+    #img_layer: Image,
     min_scale: int = 80,
     max_scale: int = 180,
     num_filter_banks: int = 1,
@@ -30,7 +31,17 @@ def generate_cwt_features_widget(
     return_phase: bool = False,
     return_z_score: bool = True
 ):
-    img = img_layer.data
+    
+    viewer = current_viewer()
+    if viewer is None:
+        raise RuntimeError("No active napari viewer found")
+
+    layer = viewer.layers.selection.active
+    if layer is None or not isinstance(layer, Image):
+        raise RuntimeError("No active image layer selected")
+
+    img = layer.data
+
     if img.ndim != 4:
         print("Expected image shape (T, C, X, Y)")
         return

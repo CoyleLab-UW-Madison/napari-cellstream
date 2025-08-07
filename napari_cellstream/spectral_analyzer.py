@@ -12,7 +12,7 @@ import nd2
 import tifffile
 from qtpy.QtWidgets import (QWidget, QVBoxLayout, QPushButton, QLabel, 
                            QComboBox, QSpinBox, QCheckBox, QHBoxLayout,
-                           QGroupBox, QDoubleSpinBox, QFormLayout,QFileDialog)
+                           QGroupBox, QDoubleSpinBox, QFormLayout,QFileDialog,QScrollArea)
 
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
@@ -121,12 +121,16 @@ class SpectralWidget(QWidget):
         left_layout.addWidget(fft_group)
         left_layout.addWidget(cwt_group)
         
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setWidget(left_panel)
+
         # Right column: Plots
         right_panel = self.plot_container  # already a QWidget with a VBoxLayout
         
         ### Main layout: horizontal split ###
         main_layout = QHBoxLayout()
-        main_layout.addWidget(left_panel)
+        main_layout.addWidget(scroll_area)
         main_layout.addWidget(right_panel)
         self.setLayout(main_layout)
         
@@ -162,7 +166,7 @@ class SpectralWidget(QWidget):
     
         file_path, _ = QFileDialog.getSaveFileName(
                 self, 
-                "Save Figure", "", 
+                "Save Figure", 
                 "spectral_plot.svg",  # Default filename with .svg
                 "SVG Files (*.svg);;PNG Files (*.png);;PDF Files (*.pdf);;All Files (*)"
             )
@@ -376,7 +380,7 @@ class SpectralWidget(QWidget):
        # print("Initializing plots...")
         plt.style.use('dark_background')
         # Create new figure
-        fig = Figure(figsize=(1, 1))
+        fig = Figure(figsize=(8, 4))
         fig.set_layout_engine(None)
         self.canvas = FigureCanvas(fig)
         self.plot_container.layout().addWidget(self.canvas)
