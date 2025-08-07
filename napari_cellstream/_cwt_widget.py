@@ -9,7 +9,7 @@ from cellstream.cwt.utils import generate_cwt_image_cellstreams
 
 @magicgui(
     call_button="Generate CWT Features",
-    
+    blocks={"min": 1, "max": 100000},
 )
 def generate_cwt_features_widget(
     #viewer: "napari.viewer.Viewer",
@@ -25,18 +25,35 @@ def generate_cwt_features_widget(
     downsample_by: float = 1.0,
     normalize_histogram: bool = True,
     mean_center: bool = False,
+    return_amplitude: bool = True,
+    return_scales: bool = True,
+    return_phase: bool = False,
+    return_z_score: bool = True
 ):
     img = img_layer.data
     if img.ndim != 4:
         print("Expected image shape (T, C, X, Y)")
         return
+    T, C, X, Y=img.shape
 
     # Convert numpy to torch tensor
     img_tensor = torch.from_numpy(img.astype('float32'))
 
     # Build channel_outputs dynamically — for now just do amp, freq, phase for channel 0
     # Could make this user-configurable later
-    channel_outputs = {0: ['amp', 'freq', 'phase']}
+    channel_outputs=dict()
+    for c in range(C):
+        channel_returns=list()
+        if return_amplitude==True:
+            channel_returns.append('amp')
+        if return_scales==True:
+            channel_returns.append('freq')
+        if return_phase==True:
+            channel_returns.append('phase')
+        if return_z_score==True:
+            channel_returns.append('z_score')
+        channel_outputs[c]=channel_returns
+    #channel_outputs = {0: ['amp', 'freq', 'phase']}
 
     print("Running CWT blockwise feature generation...")
     results = generate_cwt_image_cellstreams(

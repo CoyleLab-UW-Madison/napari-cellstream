@@ -8,9 +8,11 @@ Created on Fri Aug  1 15:35:18 2025
 import torch
 import matplotlib.pyplot as plt
 import numpy as np
+import nd2
+import tifffile
 from qtpy.QtWidgets import (QWidget, QVBoxLayout, QPushButton, QLabel, 
                            QComboBox, QSpinBox, QCheckBox, QHBoxLayout,
-                           QGroupBox, QDoubleSpinBox, QFormLayout)
+                           QGroupBox, QDoubleSpinBox, QFormLayout,QFileDialog)
 
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
@@ -71,14 +73,14 @@ class SpectralWidget(QWidget):
         # Plot container
         self.plot_container = QWidget()
         self.plot_container.setLayout(QVBoxLayout())
-        self.plot_container.setMinimumSize(600, 400)
+        self.plot_container.setMinimumSize(100, 100)
         
         #fft widget 
         self.fft_gui = fft_gui_widget
         self.fft_gui.called.connect(self.handle_fft_result)
         self.plot_container.layout().addWidget(self.fft_gui.native)
         
-        fft_group = QGroupBox("Generate FFT features")
+        fft_group = QGroupBox("     Generate FFT features")
         fft_layout = QVBoxLayout()
         fft_layout.addWidget(self.fft_gui.native)
         fft_group.setLayout(fft_layout)
@@ -89,34 +91,34 @@ class SpectralWidget(QWidget):
         self.cwt_gui.called.connect(self.handle_cwt_result)
         self.plot_container.layout().addWidget(self.cwt_gui.native)
         
-        cwt_group = QGroupBox("Generate CWT features")
+        cwt_group = QGroupBox("     Generate CWT features")
         cwt_layout = QVBoxLayout()
         cwt_layout.addWidget(self.cwt_gui.native)
         cwt_group.setLayout(cwt_layout)
         
-        # Main layout
-        # layout = QVBoxLayout()
-        # layout.addWidget(self.controls_group)
-        # layout.addWidget(self.activate_button)
-        # layout.addWidget(self.status_label)
-        # layout.addWidget(self.plot_container)
-        # self.setLayout(layout)
+        # Load image button
+        self.load_button = QPushButton("Load Image")
+        self.load_button.clicked.connect(self.open_file_dialog)
+
+        # Save plots button
+        self.save_plot_button = QPushButton("Save Plot")
+        self.save_plot_button.clicked.connect(self.save_figure)
+        self.plot_container.layout().addWidget(self.save_plot_button)
         
         # Left column: Controls
         left_panel = QWidget()
         left_layout = QVBoxLayout()
         left_panel.setLayout(left_layout)
         
+        left_layout.addWidget(self.load_button)
         left_layout.addWidget(self.controls_group)
-        #left_layout.addWidget(self.activate_button)
-        #left_layout.addWidget(self.status_label)
         left_layout.addWidget(fft_group)
         left_layout.addWidget(cwt_group)
         
         # Right column: Plots
         right_panel = self.plot_container  # already a QWidget with a VBoxLayout
         
-        # Main layout: horizontal split
+        ### Main layout: horizontal split ###
         main_layout = QHBoxLayout()
         main_layout.addWidget(left_panel)
         main_layout.addWidget(right_panel)
@@ -124,6 +126,40 @@ class SpectralWidget(QWidget):
         
         self.toggle_activation(True)
 
+    def open_file_dialog(self):
+        file_path, _ = QFileDialog.getOpenFileName(self, "Select Image", "", "Image Files (*.tif *.tiff *.png *.jpg *.jpeg *.nd2)")
+        if file_path:
+            self.load_image(file_path)
+    
+    def load_image(self, path: str):
+        print(f"Loading image from: {path}")
+        iname, iext = path.split('.')
+        if iext == 'nd2':
+            image = nd2.imread(path)
+        elif iext == 'tif':
+            image = tifffile.imread(path)
+        else:
+            print("Invalid type")
+            return
+        self.viewer.add_image(image, name=iname)
+        return
+    
+    def save_figure(self):
+        if self.canvas is None:
+            print("No plot to save.")
+            return
+    
+        file_path, _ = QFileDialog.getSaveFileName(
+                self, 
+                "Save Figure", "", 
+                "spectral_plot.svg",  # Default filename with .svg
+                "SVG Files (*.svg);;PNG Files (*.png);;PDF Files (*.pdf);;All Files (*)"
+            )
+    
+        if file_path:
+            self.canvas.figure.savefig(file_path, bbox_inches='tight', dpi=300)
+            print(f"Figure saved to: {file_path}")
+        
     def handle_fft_result(self, result):
         if not isinstance(result, dict):
             print("FFT did not return a valid result")
@@ -149,7 +185,7 @@ class SpectralWidget(QWidget):
 
     def create_controls(self):
         """Create the parameter controls"""
-        self.controls_group = QGroupBox("CWT Parameters")
+        self.controls_group = QGroupBox("     CWT Parameters")
         controls_layout = QVBoxLayout()
         
         # Wavelet selector
@@ -180,7 +216,7 @@ class SpectralWidget(QWidget):
         controls_layout.addLayout(nv_layout)
         
         # Zscore scale checkbox
-        self.zscore_check = QCheckBox("Noramlize Spectra")
+        self.zscore_check = QCheckBox("Normalize Spectra")
         self.zscore_check.setChecked(self.do_plot_zscore)
         self.zscore_check.stateChanged.connect(self.zscore_changed)
         controls_layout.addWidget(self.zscore_check)
