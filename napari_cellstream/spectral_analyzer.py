@@ -63,7 +63,7 @@ class SpectralWidget(QWidget):
         self.time_cursor_lines = []
         self.viewer.dims.events.current_step.connect(self.update_time_cursor) #time line
         self.last_update_time = 0  # store time of last update
-        self.update_interval = .1  # seconds (5 Hz)
+        self.update_interval = .25  # seconds (5 Hz)
         
         # Default settings
         self.wavelet = "gmw"
@@ -152,6 +152,7 @@ class SpectralWidget(QWidget):
         
         self.toggle_activation(True)
         self.propagate_wavelet_params_to_cwt_widget()
+        self.fmax=self.fft_gui.max_bin.value
 
     def open_file_dialog(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "Select Image", "", "Image Files (*.tif *.tiff *.png *.jpg *.jpeg *.nd2)")
@@ -472,13 +473,13 @@ class SpectralWidget(QWidget):
                 fft_std=np.std(fft)
                 fft = (fft-fft_mean)/fft_std
             
-            fmax=min(self.fft_gui.max_bin.value, fft.shape[0]) #adjust powerspectrum
+            self.fmax=min(self.fft_gui.max_bin.value, fft.shape[0]) #adjust powerspectrum
             
-            ax.plot(fft[:fmax],color='#FF91A4')
+            ax.plot(fft[:self.fmax],color='#FF91A4')
             ax.set_title("Frequency Domain")
             ax.set_xlabel("FFT bin number")
 
-            if self.current_time_index<fmax:
+            if self.current_time_index<self.fmax:
                 cursor = ax.axvline(self.current_time_index, color='red', linestyle='dotted')
                 self.time_cursor_lines.append(cursor)
 
