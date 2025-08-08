@@ -1,8 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Created on Fri Aug  1 15:35:18 2025
-
-@author: smcoyle
+@author: coylelab @ UW-Madison
 """
 
 import torch
@@ -10,35 +8,43 @@ import matplotlib.pyplot as plt
 import numpy as np
 import nd2
 import tifffile
+import time
+
 from qtpy.QtWidgets import (QWidget, QVBoxLayout, QPushButton, QLabel, 
                            QComboBox, QSpinBox, QCheckBox, QHBoxLayout,
-                           QGroupBox, QDoubleSpinBox, QFormLayout,QFileDialog,QScrollArea)
+                           QGroupBox, QDoubleSpinBox, QFormLayout,QFileDialog,
+                           QScrollArea, QSplitter)
 
+from qtpy.QtCore import Qt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
+from PyQt5.QtWidgets import QSizePolicy
+
+
 from ssqueezepy import cwt
+
 from ._fft_widget import fft_gui_widget
 from ._cwt_widget import generate_cwt_features_widget
 
-# Define wavelet parameters with default values and ranges
+# Define wavelet parameter options with default values and ranges
 WAVELET_PARAMS = {
-    'gmw': { "gamma": (3,0,20,1),
-             "beta": (3 ,0,20,1)
+    'gmw': { "gamma": (3,0,1000,1),
+             "beta": (60 ,0,1000,1)
             },
-    'morlet': { "mu": (5,0,20,1)
-            },
-    
-    
-    'bump': { "mu": (5,0,20,1),
-             "s": (3 ,0,20,1),
-             "om": (5,0,20,1)
+    'morlet': { "mu": (13.4,0,1000,1)
             },
     
-    'cmhat': { "mu": (5,0,20,1),
-             "s": (3 ,0,20,1)
+    
+    'bump': { "mu": (5,0,1000,1),
+             "s": (1 ,0,1000,1),
+             "om": (0,0,1000,1)
+            },
+    
+    'cmhat': { "mu": (1,0,1000,1),
+             "s": (1 ,0,1000,1)
              },
     
-    'hhhat': { "mu": (5,0,20,1)
+    'hhhat': { "mu": (5,0,1000,1)
             }}
 
 class SpectralWidget(QWidget):
@@ -56,9 +62,11 @@ class SpectralWidget(QWidget):
         self.current_time_index = 0
         self.time_cursor_lines = []
         self.viewer.dims.events.current_step.connect(self.update_time_cursor) #time line
+        self.last_update_time = 0  # store time of last update
+        self.update_interval = .1  # seconds (5 Hz)
         
         # Default settings
-        self.wavelet = "morlet"
+        self.wavelet = "gmw"
         self.nv = 32
         self.do_plot_zscore = True
         self.wavelet_params = {}
@@ -78,7 +86,7 @@ class SpectralWidget(QWidget):
         # Plot container
         self.plot_container = QWidget()
         self.plot_container.setLayout(QVBoxLayout())
-        self.plot_container.setMinimumSize(50, 50)
+        #self.plot_container.setMinimumSize(50, 50)
         
         #fft widget 
         self.fft_gui = fft_gui_widget
@@ -93,6 +101,7 @@ class SpectralWidget(QWidget):
         #cwt widget 
         self.cwt_gui = generate_cwt_features_widget
         self.cwt_gui.use_gpu.value=self.use_gpu
+
         #self.cwt_gui.wavelet_tuple=self.get_wavelet_tuple() ##fix this later
         self.cwt_gui.called.connect(self.handle_cwt_result)
         self.plot_container.layout().addWidget(self.cwt_gui.native)
@@ -126,15 +135,23 @@ class SpectralWidget(QWidget):
         scroll_area.setWidget(left_panel)
 
         # Right column: Plots
-        right_panel = self.plot_container  # already a QWidget with a VBoxLayout
+        #right_panel = self.plot_container  # already a QWidget with a VBoxLayout
         
-        ### Main layout: horizontal split ###
+        ### Main layout using splitter ###
+        splitter = QSplitter(Qt.Horizontal)
+        splitter.addWidget(scroll_area)
+        splitter.addWidget(self.plot_container)
+
+        # Optional: set initial sizes (pixels)
+        splitter.setSizes([300, 300])  # adjust to taste
+
         main_layout = QHBoxLayout()
-        main_layout.addWidget(scroll_area)
-        main_layout.addWidget(right_panel)
+        main_layout.addWidget(splitter)
         self.setLayout(main_layout)
+
         
         self.toggle_activation(True)
+        self.propagate_wavelet_params_to_cwt_widget()
 
     def open_file_dialog(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "Select Image", "", "Image Files (*.tif *.tiff *.png *.jpg *.jpeg *.nd2)")
@@ -174,7 +191,8 @@ class SpectralWidget(QWidget):
         if file_path:
             self.canvas.figure.savefig(file_path, bbox_inches='tight', dpi=300)
             print(f"Figure saved to: {file_path}")
-        
+    
+    ###FFT widget components
     def handle_fft_result(self, result):
         if not isinstance(result, dict):
             print("FFT did not return a valid result")
@@ -186,18 +204,43 @@ class SpectralWidget(QWidget):
                 data = data.cpu().numpy()
             self.viewer.add_image(data, name=name)
 
+    ###CWT widget components
+    def propagate_wavelet_params_to_cwt_widget(self):
+        self.cwt_gui.nv.value=self.nv
+        wavelet_tuple=self.get_wavelet_tuple()
+        wavelet_choice=wavelet_tuple[0]
+        wavelet_params=wavelet_tuple[1]
+        self.cwt_gui.wavelet_choice.value=wavelet_choice
+        self.cwt_gui.wavelet_parameters.value=wavelet_params
+
     def handle_cwt_result(self,results):
+        
+        consolidated = {}
+
+        for ch_data in results.values():
+            for key, arr in ch_data.items():
+                if key not in consolidated:
+                    consolidated[key] = []
+                consolidated[key].append(arr.numpy())
+        
+        # Optional: stack into arrays (e.g., shape = (channels, ...))
+        for key in consolidated:
+            consolidated[key] = np.stack(consolidated[key], axis=0)
+            
+    
         # Add results to Napari viewer
-        for chan, feature_dict in results.items():
-            for feat_name, feat_tensor in feature_dict.items():
-                layer_name = f"cwt_c{chan}_{feat_name}"
-                self.viewer.add_image(
-                    feat_tensor.numpy(),  # already (T, num_filter_banks, X, Y)
-                    name=layer_name,
-                    scale=[20,1,1],
-                    metadata={"source": "cwt", "channel": chan, "feature": feat_name}
+        for feature, array in consolidated.items():
+            layer_name = f"{feature}"
+            self.viewer.add_image(
+                array.swapaxes(0,1),  #  organize as (T, num_filter_banks "Z", C, X, Y)
+                name=layer_name,
+                scale=[20,1,1],
+                metadata={"source": "cwt", "feature": feature}
             )
 
+
+
+    ###pixel inspector conmponents
     def create_controls(self):
         """Create the parameter controls"""
         self.controls_group = QGroupBox("     CWT Parameters")
@@ -224,7 +267,7 @@ class SpectralWidget(QWidget):
         nv_layout = QHBoxLayout()
         nv_layout.addWidget(QLabel("Number of Scales:"))
         self.nv_spin = QSpinBox()
-        self.nv_spin.setRange(1, 64)
+        self.nv_spin.setRange(1, 1000)
         self.nv_spin.setValue(self.nv)
         self.nv_spin.valueChanged.connect(self.nv_changed)
         nv_layout.addWidget(self.nv_spin)
@@ -279,26 +322,33 @@ class SpectralWidget(QWidget):
         # Show/hide container based on whether there are parameters
         self.params_container.setVisible(len(params) > 0)
     
+
+    ### handle dynamic updating of plots and setting cwt_params
     def wavelet_changed(self, value):
         self.wavelet = value
         self.create_wavelet_params_controls()
         self.refresh_plots()
-    
+        self.propagate_wavelet_params_to_cwt_widget() # propagate params to CWT_widget
+
     def param_changed(self, value):
         self.refresh_plots()
-    
+        self.propagate_wavelet_params_to_cwt_widget()
+
     def nv_changed(self, value):
         self.nv = value
         self.refresh_plots()
+        self.propagate_wavelet_params_to_cwt_widget()
     
     def zscore_changed(self, state):
         self.do_plot_zscore = (state == 2)  # 2 is checked
         self.refresh_plots()
+        self.propagate_wavelet_params_to_cwt_widget()
     
     def refresh_plots(self):
         """Refresh plots with current settings"""
         if self.last_layer and self.last_x is not None and self.last_y is not None:
             self.process_pixel(self.last_layer, self.last_x, self.last_y)
+            self.propagate_wavelet_params_to_cwt_widget()
     
     def get_wavelet_tuple(self):
         """Create the wavelet tuple with current parameters"""
@@ -323,7 +373,11 @@ class SpectralWidget(QWidget):
     def update_time_cursor(self, event=None):
         if self.canvas is None or not hasattr(self, "time_cursor_lines"):
             return
-    
+        
+        now=time.time()
+        if now - self.last_update_time < self.update_interval:
+           return  # Skip update if too soon
+       
         current_t = self.viewer.dims.current_step[0]  # assumes time axis is 0
         self.current_time_index = current_t
     
@@ -331,6 +385,7 @@ class SpectralWidget(QWidget):
             line.set_xdata([current_t])
     
         self.canvas.draw_idle()
+        self.last_update_time = now
     
     def on_click(self, viewer, event):
         """Handle click events with Shift modifier"""
@@ -376,13 +431,12 @@ class SpectralWidget(QWidget):
             self.plot_container.layout().removeWidget(self.canvas)
             self.canvas.deleteLater()
             self.canvas = None
-       
-       # print("Initializing plots...")
+
+        #make new plot
         plt.style.use('dark_background')
-        # Create new figure
-        fig = Figure(figsize=(6, 4))
-        fig.set_layout_engine(None)
+        fig = Figure()
         self.canvas = FigureCanvas(fig)
+        self.canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding) #dynamic layout
         self.plot_container.layout().addWidget(self.canvas)
         
         # Create subplots: 3 rows (time, FFT, CWT) x C columns
@@ -412,15 +466,22 @@ class SpectralWidget(QWidget):
             ax = axes[1, c] if C > 1 else axes[1, 0]
             ax.clear()
             fft = np.abs(np.fft.rfft(ts))
+            
             if self.do_plot_zscore:
                 fft_mean=np.mean(fft)
                 fft_std=np.std(fft)
                 fft = (fft-fft_mean)/fft_std
-                
-            ax.plot(fft,color='#FF91A4')
+            
+            fmax=min(self.fft_gui.max_bin.value, fft.shape[0]) #adjust powerspectrum
+            
+            ax.plot(fft[:fmax],color='#FF91A4')
             ax.set_title("Frequency Domain")
             ax.set_xlabel("FFT bin number")
-            
+
+            if self.current_time_index<fmax:
+                cursor = ax.axvline(self.current_time_index, color='red', linestyle='dotted')
+                self.time_cursor_lines.append(cursor)
+
             # CWT plot
             ax = axes[2, c] if C > 1 else axes[2, 0]
             ax.clear()

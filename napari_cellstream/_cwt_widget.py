@@ -11,6 +11,9 @@ from cellstream.cwt.utils import generate_cwt_image_cellstreams
 @magicgui(
     call_button="Generate CWT Features",
     blocks={"min": 1, "max": 100000},
+    wavelet_choice={"visible": False},
+    wavelet_parameters={"visible": False},
+    nv={"visible": False},
 )
 def generate_cwt_features_widget(
     #viewer: "napari.viewer.Viewer",
@@ -29,7 +32,10 @@ def generate_cwt_features_widget(
     return_amplitude: bool = True,
     return_scales: bool = True,
     return_phase: bool = False,
-    return_z_score: bool = True
+    return_z_score: bool = True,
+    wavelet_choice: str = 'gmw',
+    wavelet_parameters= None,
+    nv: int = 32,
 ):
     
     viewer = current_viewer()
@@ -50,8 +56,7 @@ def generate_cwt_features_widget(
     # Convert numpy to torch tensor
     img_tensor = torch.from_numpy(img.astype('float32'))
 
-    # Build channel_outputs dynamically — for now just do amp, freq, phase for channel 0
-    # Could make this user-configurable later
+    #prepare channel_outputs parameter
     channel_outputs=dict()
     for c in range(C):
         channel_returns=list()
@@ -64,9 +69,15 @@ def generate_cwt_features_widget(
         if return_z_score==True:
             channel_returns.append('z_score')
         channel_outputs[c]=channel_returns
-    #channel_outputs = {0: ['amp', 'freq', 'phase']}
+    
+    #prepare wavelet parameters:
+    if wavelet_parameters==None:
+        wavelet=wavelet_choice #pure string
+    else:
+        wavelet=(wavelet_choice,wavelet_parameters) # tuple
 
-    print("Running CWT blockwise feature generation...")
+
+    print(f"Running CWT blockwise feature generation with {wavelet} and {nv}...")
     results = generate_cwt_image_cellstreams(
         img=img_tensor,
         min_scale=min_scale,
@@ -81,6 +92,8 @@ def generate_cwt_features_widget(
         mean_center=mean_center,
         carrier_channel=carrier_channel,
         channel_outputs=channel_outputs,
+        wavelet=wavelet,
+        nv=nv
     )
 
     return results
