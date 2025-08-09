@@ -25,6 +25,8 @@ from ssqueezepy import cwt
 
 from ._fft_widget import fft_gui_widget
 from ._cwt_widget import generate_cwt_features_widget
+from ._falsecolor_spectrum import false_color_widget
+from ._downsample_widget import downsample_gui_widget
 
 # Define wavelet parameter options with default values and ranges
 WAVELET_PARAMS = {
@@ -134,22 +136,59 @@ class SpectralWidget(QWidget):
         scroll_area.setWidgetResizable(True)
         scroll_area.setWidget(left_panel)
 
-        # Right column: Plots
-        #right_panel = self.plot_container  # already a QWidget with a VBoxLayout
-        
         ### Main layout using splitter ###
         splitter = QSplitter(Qt.Horizontal)
         splitter.addWidget(scroll_area)
         splitter.addWidget(self.plot_container)
+        splitter.setSizes([300, 300])  
 
-        # Optional: set initial sizes (pixels)
-        splitter.setSizes([300, 300])  # adjust to taste
+        main = QWidget()
+        main_layout = QVBoxLayout()
+        main.setLayout(main_layout)
+        
+        ### Top widget: two side-by-side panels
 
-        main_layout = QHBoxLayout()
+        top_widget = QWidget()
+        top_row = QHBoxLayout(top_widget)
+        top_row.addWidget(splitter)
+        
+
+        ###Bottom widget that spans both
+        bottom_panel = QWidget()
+        bottom_layout = QHBoxLayout()
+        
+        #False color widget
+        false_color_group = QGroupBox("  False-color spectrum")
+        self.false_color_gui = false_color_widget
+        self.false_color_gui.called.connect(self.handle_false_color_result)
+        false_color_layout = QVBoxLayout()
+        false_color_layout.addWidget(self.false_color_gui.native)
+        false_color_group.setLayout(false_color_layout)
+        
+        #Downsample widget
+        downsample_group = QGroupBox("  Downsample image")
+        self.downsample_gui = downsample_gui_widget
+        self.downsample_gui.called.connect(self.handle_downsample_result)
+        downsample_layout = QVBoxLayout()
+        downsample_layout.addWidget(self.downsample_gui.native)
+        downsample_group.setLayout(downsample_layout)
+
+        #Add widgets to bottom panel
+        bottom_layout.addWidget(false_color_group)
+        bottom_layout.addWidget(downsample_group)
+        bottom_panel.setLayout(bottom_layout)
+        
+        ### Connect top and bottom widgets
+        splitter = QSplitter(Qt.Vertical)
+        splitter.addWidget(top_widget)
+        splitter.addWidget(bottom_panel)
+        splitter.setSizes([800, 25])  
+        
+        #finalize and display layout
         main_layout.addWidget(splitter)
         self.setLayout(main_layout)
 
-        
+        #initialize connections
         self.toggle_activation(True)
         self.propagate_wavelet_params_to_cwt_widget()
         self.fmax=self.fft_gui.max_bin.value
@@ -215,19 +254,17 @@ class SpectralWidget(QWidget):
         self.cwt_gui.wavelet_parameters.value=wavelet_params
 
     def handle_cwt_result(self,results):
-        
+        #reorganize spectra
         consolidated = {}
-
         for ch_data in results.values():
             for key, arr in ch_data.items():
                 if key not in consolidated:
                     consolidated[key] = []
                 consolidated[key].append(arr.numpy())
         
-        # Optional: stack into arrays (e.g., shape = (channels, ...))
+        #convert to array
         for key in consolidated:
             consolidated[key] = np.stack(consolidated[key], axis=0)
-            
     
         # Add results to Napari viewer
         for feature, array in consolidated.items():
@@ -239,9 +276,31 @@ class SpectralWidget(QWidget):
                 metadata={"source": "cwt", "feature": feature}
             )
 
+    ### False-color widget components
+    def handle_false_color_result(self, result):
+        #remove original
+        active_layer = self.viewer.layers.selection.active
+        if active_layer is not None:
+            self.viewer.layers.remove(active_layer)
 
+        #add downsampled
+        self.viewer.add_image(
+            result,  
+            name="False colored",
+            scale=[20,1,1],
+            metadata={"source": "cellstream.color_by_axis"}
+        )
+        return
 
-    ###pixel inspector conmponents
+    def handle_downsample_result(self, result):
+        self.viewer.add_image(
+            result,  
+            name="False colored",
+            scale=[20,1,1],
+            metadata={"source": "cellstream.color_by_axis"}
+        )
+
+    ###pixel inspector components
     def create_controls(self):
         """Create the parameter controls"""
         self.controls_group = QGroupBox("     CWT Parameters")
@@ -478,10 +537,10 @@ class SpectralWidget(QWidget):
             ax.plot(fft[:self.fmax],color='#FF91A4')
             ax.set_title("Frequency Domain")
             ax.set_xlabel("FFT bin number")
-
-            if self.current_time_index<self.fmax:
-                cursor = ax.axvline(self.current_time_index, color='red', linestyle='dotted')
-                self.time_cursor_lines.append(cursor)
+            
+            cursor = ax.axvline(min(self.current_time_index,self.fmax), color='red', linestyle='dotted')
+            self.time_cursor_lines.append(cursor)
+            
 
             # CWT plot
             ax = axes[2, c] if C > 1 else axes[2, 0]
