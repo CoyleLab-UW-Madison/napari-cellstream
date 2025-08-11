@@ -204,7 +204,8 @@ class SpectralWidget(QWidget):
 
     def load_image(self, path: str):
         print(f"Loading image from: {path}")
-        iname, iext = path.split(".")
+        *iname, iext = path.split(".")
+        iname = ".".join(iname) # handle filenames with . in path
         if iext == "nd2":
             image = nd2.imread(path)
         elif iext == "tif":
