@@ -1,12 +1,9 @@
-from magicgui import magicgui
-from napari.types import ImageData
-from napari.layers import Image
-from napari import current_viewer
-from qtpy.QtWidgets import QWidget
 import torch
-import numpy as np
-
 from cellstream.cwt.utils import generate_cwt_image_cellstreams
+from magicgui import magicgui
+from napari import current_viewer
+from napari.layers import Image
+
 
 @magicgui(
     call_button="Generate CWT Features",
@@ -16,8 +13,8 @@ from cellstream.cwt.utils import generate_cwt_image_cellstreams
     nv={"visible": False},
 )
 def generate_cwt_features_widget(
-    #viewer: "napari.viewer.Viewer",
-    #img_layer: Image,
+    # viewer: "napari.viewer.Viewer",
+    # img_layer: Image,
     min_scale: int = 80,
     max_scale: int = 180,
     num_filter_banks: int = 1,
@@ -25,7 +22,7 @@ def generate_cwt_features_widget(
     blocks: int = 50,
     normalize_amplitudes: bool = False,
     use_gpu: bool = False,
-    bank_method: str = 'max_pool',
+    bank_method: str = "max_pool",
     downsample_by: float = 1.0,
     normalize_histogram: bool = True,
     mean_center: bool = False,
@@ -33,11 +30,10 @@ def generate_cwt_features_widget(
     return_scales: bool = True,
     return_phase: bool = False,
     return_z_score: bool = True,
-    wavelet_choice: str = 'gmw',
-    wavelet_parameters= None,
+    wavelet_choice: str = "gmw",
+    wavelet_parameters=None,
     nv: int = 32,
 ):
-    
     viewer = current_viewer()
     if viewer is None:
         raise RuntimeError("No active napari viewer found")
@@ -51,31 +47,30 @@ def generate_cwt_features_widget(
     if img.ndim != 4:
         print("Expected image shape (T, C, X, Y)")
         return
-    T, C, X, Y=img.shape
+    T, C, X, Y = img.shape
 
     # Convert numpy to torch tensor
-    img_tensor = torch.from_numpy(img.astype('float32'))
+    img_tensor = torch.from_numpy(img.astype("float32"))
 
-    #prepare channel_outputs parameter
-    channel_outputs=dict()
+    # prepare channel_outputs parameter
+    channel_outputs = dict()
     for c in range(C):
-        channel_returns=list()
-        if return_amplitude==True:
-            channel_returns.append('amp')
-        if return_scales==True:
-            channel_returns.append('freq')
-        if return_phase==True:
-            channel_returns.append('phase')
-        if return_z_score==True:
-            channel_returns.append('z_score')
-        channel_outputs[c]=channel_returns
-    
-    #prepare wavelet parameters:
-    if wavelet_parameters==None:
-        wavelet=wavelet_choice #pure string
-    else:
-        wavelet=(wavelet_choice,wavelet_parameters) # tuple
+        channel_returns = list()
+        if return_amplitude is True:
+            channel_returns.append("amp")
+        if return_scales is True:
+            channel_returns.append("freq")
+        if return_phase is True:
+            channel_returns.append("phase")
+        if return_z_score is True:
+            channel_returns.append("z_score")
+        channel_outputs[c] = channel_returns
 
+    # prepare wavelet parameters:
+    if wavelet_parameters is None:
+        wavelet = wavelet_choice  # pure string
+    else:
+        wavelet = (wavelet_choice, wavelet_parameters)  # tuple
 
     print(f"Running CWT blockwise feature generation with {wavelet} and {nv}...")
     results = generate_cwt_image_cellstreams(
@@ -93,7 +88,7 @@ def generate_cwt_features_widget(
         carrier_channel=carrier_channel,
         channel_outputs=channel_outputs,
         wavelet=wavelet,
-        nv=nv
+        nv=nv,
     )
 
     return results
