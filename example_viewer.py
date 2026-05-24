@@ -11,17 +11,18 @@ Created on Wed Jul 30 23:43:23 2025
 
 @author: smcoyle
 """
-import torch
+
 import napari
 import cellstream
-#from napari_cellstream import SpectralWidget
+
+#make napari play well with tensors
+cellstream.patch_napari_for_torch()
 
 # Main workflow
 if __name__ == "__main__":
     # Load and preprocess image
     img = cellstream.image.load_image("example_timeseries_mini_0.tif")
     img = cellstream.image.normalize_histogram(img)
-    img = img.detach().numpy()
     
     # Create viewer and add image
     viewer = napari.Viewer()

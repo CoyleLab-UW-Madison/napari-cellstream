@@ -1,9 +1,21 @@
 [project]
-name = "napari_cellstream"
+name = "napari-cellstream"
 version = "0.1.0"
 description = "Napari spectral analyzer for pixel-level cellstream diagnostics"
-authors = [
-    { name = "coylelab" }
+authors = [{ name = "coylelab" }]
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "BSD-3-Clause" }
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Framework :: napari",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Topic :: Scientific/Engineering :: Image Processing",
 ]
 dependencies = [
     "napari",
@@ -11,11 +23,23 @@ dependencies = [
     "numpy",
     "matplotlib",
     "ssqueezepy",
-    "npe2"
+    "torch",
+    "nd2",
+    "tifffile",
+    "qtpy",
+    "npe2",
 ]
-readme = "README.md"
-requires-python = ">=3.8"
+
+[project.entry-points."napari.manifest"]
+napari-cellstream = "napari_cellstream:napari.yaml"
 
 [build-system]
-requires = ["setuptools", "wheel"]
+requires = ["setuptools>=42", "wheel"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["napari_cellstream"]
+include-package-data = true
+
+[tool.setuptools.package-data]
+"*" = ["*.yaml"]

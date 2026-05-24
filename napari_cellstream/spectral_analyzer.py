@@ -18,7 +18,7 @@ from qtpy.QtWidgets import (QWidget, QVBoxLayout, QPushButton, QLabel,
 from qtpy.QtCore import Qt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
-from PyQt5.QtWidgets import QSizePolicy
+from qtpy.QtWidgets import QSizePolicy
 
 
 from ssqueezepy import cwt
@@ -27,6 +27,10 @@ from ._fft_widget import fft_gui_widget
 from ._cwt_widget import generate_cwt_features_widget
 from ._falsecolor_spectrum import false_color_widget
 from ._downsample_widget import downsample_gui_widget
+
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Define wavelet parameter options with default values and ranges
 WAVELET_PARAMS = {
@@ -199,26 +203,26 @@ class SpectralWidget(QWidget):
             self.load_image(file_path)
     
     def load_image(self, path: str):
-        print(f"Loading image from: {path}")
-        iname, iext = path.split('.')
+        logger.info(f"Loading image from: {path}")
+        *iname, iext = path.split('.')
         if iext == 'nd2':
             image = nd2.imread(path)
         elif iext == 'tif':
             image = tifffile.imread(path)
         else:
-            print("Invalid type")
+            logger.error("Invalid type")
             return
         #check dimension -- insert dummy channel dimension if need by
         if image.ndim==3:
             image=np.expand_dims(image,axis=1)
-            print("Inserting channel dimension...")
+            logger.info("Inserting channel dimension...")
         
-        self.viewer.add_image(image, name=iname)
+        self.viewer.add_image(image, name=iname[-1])
         return
     
     def save_figure(self):
         if self.canvas is None:
-            print("No plot to save.")
+            logger.warning("No plot to save.")
             return
     
         file_path, _ = QFileDialog.getSaveFileName(
@@ -230,12 +234,12 @@ class SpectralWidget(QWidget):
     
         if file_path:
             self.canvas.figure.savefig(file_path, bbox_inches='tight', dpi=300)
-            print(f"Figure saved to: {file_path}")
+            logger.info(f"Figure saved to: {file_path}")
     
     ###FFT widget components
     def handle_fft_result(self, result):
         if not isinstance(result, dict):
-            print("FFT did not return a valid result")
+            logger.error("FFT did not return a valid result")
             return
 
         for key, data in result.items():
@@ -278,11 +282,7 @@ class SpectralWidget(QWidget):
 
     ### False-color widget components
     def handle_false_color_result(self, result):
-        #remove original
-        active_layer = self.viewer.layers.selection.active
-        if active_layer is not None:
-            self.viewer.layers.remove(active_layer)
-
+       
         #add downsampled
         self.viewer.add_image(
             result,  
@@ -293,6 +293,11 @@ class SpectralWidget(QWidget):
         return
 
     def handle_downsample_result(self, result):
+        #remove original
+        active_layer = self.viewer.layers.selection.active
+        if active_layer is not None:
+            self.viewer.layers.remove(active_layer)
+
         self.viewer.add_image(
             result,  
             name="False colored",
@@ -471,7 +476,7 @@ class SpectralWidget(QWidget):
             self.process_pixel(layer, x, y)
                 
         except Exception as e:
-            print(f"Error processing click: {e}")
+            logger.error(f"Error processing click: {e}")
 
     def process_pixel(self, layer, x, y):
         """Process and display data for a single pixel"""
@@ -483,7 +488,7 @@ class SpectralWidget(QWidget):
         
         # Validate coordinates
         if not (0 <= x < X and 0 <= y < Y):
-            print(f"Coordinates out of bounds: ({x}, {y})")
+            logger.warning(f"Coordinates out of bounds: ({x}, {y})")
             return
             
         # Clear previous plot
@@ -511,7 +516,7 @@ class SpectralWidget(QWidget):
             ts -= np.mean(ts)
             
             # Time domain plot
-            #print("Plotting time domain")
+            logger.debug("Plotting time domain")
             ax = axes[0, c] if C > 1 else axes[0, 0]
             ax.clear()
             ax.plot(ts)
@@ -521,7 +526,7 @@ class SpectralWidget(QWidget):
             cursor = ax.axvline(self.current_time_index, color='red', linestyle='dotted')
             self.time_cursor_lines.append(cursor)
 
-            #print("Plotting freq domain")
+            logger.debug("Plotting freq domain")
             # Frequency domain plot
             ax = axes[1, c] if C > 1 else axes[1, 0]
             ax.clear()
@@ -549,7 +554,7 @@ class SpectralWidget(QWidget):
             # Get wavelet tuple with current parameters
             wavelet_tuple = self.get_wavelet_tuple()
             
-            #print("Plotting cwt domain")
+            logger.debug("Plotting cwt domain")
             # Compute CWT with the selected wavelet and parameters
             Wx, _ = cwt(ts, wavelet=wavelet_tuple, nv=self.nv)
 
@@ -563,7 +568,7 @@ class SpectralWidget(QWidget):
                 cwt_mag_std=np.std(cwt_mag,axis=0)
                 cwt_mag=(cwt_mag-cwt_mag_mean)/cwt_mag_std
            
-           # print("Finalizing plots...")
+            logger.debug("Finalizing plots...")
             im = ax.imshow(cwt_mag, aspect='auto', origin='lower', cmap='viridis')
             ax.set_title(f"CWT: {wavelet_tuple[0]}")
             ax.set_xlabel("Time")
@@ -580,6 +585,15 @@ class SpectralWidget(QWidget):
     def closeEvent(self, event):
         """Clean up when widget is closed"""
         if self.cid is not None:
-            self.viewer.mouse_drag_callbacks.remove(self.cid)
+            try:
+                self.viewer.mouse_drag_callbacks.remove(self.cid)
+            except (ValueError, RuntimeError):
+                pass
+        
+        try:
+            self.viewer.dims.events.current_step.disconnect(self.update_time_cursor)
+        except (ValueError, RuntimeError):
+            pass
+
         super().closeEvent(event)
 
