@@ -1,9 +1,5 @@
 # napari-cellstream
 
-[![License](https://img.shields.io/badge/License-BSD%203--Clause-blue.svg)](https://opensource.org/licenses/BSD-3-Clause)
-[![napari hub](https://img.shields.io/endpoint?url=https://api.napari-hub.org/status/napari-cellstream)](https://www.napari-hub.org/plugins/napari-cellstream)
-[![Python Version](https://img.shields.io/pypi/pyversions/napari-cellstream.svg)](https://pypi.org/project/napari-cellstream)
-
 A napari spectral analyzer for pixel-level cellstream diagnostics. This plugin provides tools for analyzing time-series imagery using Fast Fourier Transforms (FFT) and Continuous Wavelet Transforms (CWT), specifically designed for use with the [cellstream](https://github.com/coylelab/cellstream) image processing toolbox.
 
 ---
