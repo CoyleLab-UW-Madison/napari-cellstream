@@ -9,11 +9,12 @@ import numpy as np
 import nd2
 import tifffile
 import time
+import zarr
 
 from qtpy.QtWidgets import (QWidget, QVBoxLayout, QPushButton, QLabel, 
                            QComboBox, QSpinBox, QCheckBox, QHBoxLayout,
                            QGroupBox, QDoubleSpinBox, QFormLayout,QFileDialog,
-                           QScrollArea, QSplitter)
+                           QScrollArea, QSplitter, QTreeWidget, QTreeWidgetItem)
 
 from qtpy.QtCore import Qt
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
@@ -70,6 +71,11 @@ class SpectralWidget(QWidget):
         self.viewer.dims.events.current_step.connect(self.update_time_cursor) #time line
         self.last_update_time = 0  # store time of last update
         self.update_interval = .25  # seconds (5 Hz)
+        
+        # Feature dictionary tree results store
+        self.cwt_count = 0
+        self.fft_count = 0
+        self.results_dict = {}
         
         # Default settings
         self.wavelet = "gmw"
@@ -140,11 +146,37 @@ class SpectralWidget(QWidget):
         scroll_area.setWidgetResizable(True)
         scroll_area.setWidget(left_panel)
 
+        # Right column: Results History Tree
+        self.results_panel = QGroupBox("     Results History")
+        results_layout = QVBoxLayout()
+        self.results_panel.setLayout(results_layout)
+
+        self.results_tree = QTreeWidget()
+        self.results_tree.setColumnCount(2)
+        self.results_tree.setHeaderLabels(["Key/Channel/Feature", "Value/Type"])
+        self.results_tree.setColumnWidth(0, 180)
+        self.results_tree.itemDoubleClicked.connect(self.on_tree_item_double_clicked)
+        results_layout.addWidget(self.results_tree)
+
+        # Buttons under the tree
+        buttons_layout = QHBoxLayout()
+        
+        self.write_zarr_button = QPushButton("Write to Zarr")
+        self.write_zarr_button.clicked.connect(self.save_result_to_zarr)
+        buttons_layout.addWidget(self.write_zarr_button)
+
+        self.load_zarr_button = QPushButton("Load Zarr")
+        self.load_zarr_button.clicked.connect(self.load_result_from_zarr)
+        buttons_layout.addWidget(self.load_zarr_button)
+        
+        results_layout.addLayout(buttons_layout)
+
         ### Main layout using splitter ###
         splitter = QSplitter(Qt.Horizontal)
         splitter.addWidget(scroll_area)
         splitter.addWidget(self.plot_container)
-        splitter.setSizes([300, 300])  
+        splitter.addWidget(self.results_panel)
+        splitter.setSizes([250, 450, 300])  
 
         main = QWidget()
         main_layout = QVBoxLayout()
@@ -242,6 +274,15 @@ class SpectralWidget(QWidget):
             logger.error("FFT did not return a valid result")
             return
 
+        # Add to results tree
+        self.fft_count += 1
+        root_name = f"FFT_Result_{self.fft_count}"
+        root_item = QTreeWidgetItem(self.results_tree)
+        root_item.setText(0, root_name)
+        root_item.setText(1, f"Dict ({len(result)} keys)")
+        self.populate_tree(root_item, result)
+        self.results_dict[id(root_item)] = result
+
         for key, data in result.items():
             name = f"FFT_{key}"
             if isinstance(data, torch.Tensor):
@@ -258,13 +299,28 @@ class SpectralWidget(QWidget):
         self.cwt_gui.wavelet_parameters.value=wavelet_params
 
     def handle_cwt_result(self,results):
+        # Add to results tree
+        self.cwt_count += 1
+        wavelet_name = self.cwt_gui.wavelet_choice.value
+        nv_val = self.cwt_gui.nv.value
+        root_name = f"CWT_Result_{self.cwt_count} (wavelet={wavelet_name}, nv={nv_val})"
+        root_item = QTreeWidgetItem(self.results_tree)
+        root_item.setText(0, root_name)
+        root_item.setText(1, f"Dict ({len(results)} channels)")
+        self.populate_tree(root_item, results)
+        self.results_dict[id(root_item)] = results
+
         #reorganize spectra
         consolidated = {}
         for ch_data in results.values():
             for key, arr in ch_data.items():
                 if key not in consolidated:
                     consolidated[key] = []
-                consolidated[key].append(arr.numpy())
+                if isinstance(arr, torch.Tensor):
+                    arr = arr.detach().cpu().numpy()
+                elif hasattr(arr, "numpy"):
+                    arr = arr.numpy()
+                consolidated[key].append(arr)
         
         #convert to array
         for key in consolidated:
@@ -596,4 +652,221 @@ class SpectralWidget(QWidget):
             pass
 
         super().closeEvent(event)
+
+    def populate_tree(self, root_item, data):
+        """Recursively populate the tree items under the root_item."""
+        if isinstance(data, dict):
+            for k, v in data.items():
+                child = QTreeWidgetItem(root_item)
+                child.setText(0, str(k))
+                self.populate_tree(child, v)
+        elif isinstance(data, (torch.Tensor, np.ndarray)):
+            shape_str = "x".join(map(str, data.shape))
+            dtype_str = str(data.dtype)
+            type_name = "Tensor" if isinstance(data, torch.Tensor) else "Array"
+            root_item.setText(1, f"{type_name} [{shape_str}] ({dtype_str})")
+        elif isinstance(data, (int, float, str, list, tuple)):
+            root_item.setText(1, str(data))
+        else:
+            root_item.setText(1, f"{type(data).__name__}: {str(data)}")
+
+    def on_tree_item_double_clicked(self, item, column):
+        """Handle double clicks on leaf tree items to add them to the canvas."""
+        # Only add leaf items (items with no children)
+        if item.childCount() > 0:
+            return
+
+        # Find the path of keys from root to leaf
+        path = []
+        curr = item
+        while curr is not None:
+            path.append(curr.text(0))
+            curr = curr.parent()
+        path.reverse()
+
+        # Find the root item to get the data dictionary
+        root_item = item
+        while root_item.parent() is not None:
+            root_item = root_item.parent()
+
+        data = self.results_dict.get(id(root_item))
+        if data is None:
+            return
+
+        # Traverse the dictionary using the path (skipping path[0] which is the root name)
+        val = data
+        for key in path[1:]:
+            if isinstance(val, dict):
+                if key in val:
+                    val = val[key]
+                elif key.isdigit() and int(key) in val:
+                    val = val[int(key)]
+                else:
+                    logger.warning(f"Key {key} not found in dictionary data.")
+                    return
+            else:
+                logger.warning("Encountered non-dict before leaf was reached.")
+                return
+
+        # Add to canvas if it's a tensor or array
+        if isinstance(val, (torch.Tensor, np.ndarray)):
+            if isinstance(val, torch.Tensor):
+                val = val.detach().cpu().numpy()
+            
+            # Form layer name by joining the path elements
+            layer_name = "_".join(path)
+            self.viewer.add_image(val, name=layer_name)
+            logger.info(f"Added {layer_name} to napari canvas.")
+        else:
+            from qtpy.QtWidgets import QMessageBox
+            QMessageBox.information(
+                self, "Not an Image/Array",
+                f"Selected item value is: {val}\n(Only arrays and tensors can be added to the canvas)"
+            )
+
+    def save_result_to_zarr(self):
+        """Save the selected result or the root ancestor of the selected item to a Zarr store."""
+        current_item = self.results_tree.currentItem()
+        if current_item is None:
+            from qtpy.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "No Selection", "Please select a result or item from the tree.")
+            return
+
+        # Find root item
+        root_item = current_item
+        while root_item.parent() is not None:
+            root_item = root_item.parent()
+
+        data = self.results_dict.get(id(root_item))
+        if data is None:
+            from qtpy.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "No Data", "Could not find the data associated with the selected item.")
+            return
+
+        # Suggest filename based on root item name
+        suggested_name = root_item.text(0).replace(" ", "_").replace("=", "-").replace(",", "") + ".zarr"
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Zarr Store",
+            suggested_name,
+            "Zarr Store (*.zarr);;All Files (*)"
+        )
+        if not file_path:
+            return
+
+        # Write to zarr
+        try:
+            try:
+                from cellstream.io import write_to_zarr
+                write_to_zarr(data, file_path)
+            except ImportError:
+                # Fallback to local implementation
+                self.local_write_to_zarr(data, file_path)
+            
+            from qtpy.QtWidgets import QMessageBox
+            QMessageBox.information(self, "Save Successful", f"Successfully saved to:\n{file_path}")
+        except Exception as e:
+            logger.error(f"Error writing to zarr: {e}")
+            from qtpy.QtWidgets import QMessageBox
+            QMessageBox.critical(self, "Save Failed", f"Failed to save to Zarr:\n{str(e)}")
+
+    def load_result_from_zarr(self):
+        """Load a saved Zarr store directory and display its tree structure in the table."""
+        dir_path = QFileDialog.getExistingDirectory(
+            self,
+            "Select Zarr Store Directory",
+            ""
+        )
+        if not dir_path:
+            return
+
+        try:
+            # Open zarr store
+            store = zarr.DirectoryStore(dir_path)
+            root = zarr.open(store=store, mode="r")
+            
+            # Load zarr to dictionary recursively
+            data = self.local_load_zarr_to_dict(root)
+            
+            # Generate root name based on directory name
+            import os
+            dir_name = os.path.basename(dir_path)
+            if not dir_name:
+                dir_name = os.path.basename(os.path.dirname(dir_path))
+            
+            root_name = f"Loaded_{dir_name}"
+            
+            # Create root item in the tree
+            root_item = QTreeWidgetItem(self.results_tree)
+            root_item.setText(0, root_name)
+            
+            if isinstance(data, dict):
+                root_item.setText(1, f"Dict ({len(data)} keys)")
+            else:
+                root_item.setText(1, f"Zarr Array")
+                
+            self.populate_tree(root_item, data)
+            self.results_dict[id(root_item)] = data
+            
+            from qtpy.QtWidgets import QMessageBox
+            QMessageBox.information(self, "Load Successful", f"Successfully loaded Zarr store from:\n{dir_path}")
+            
+        except Exception as e:
+            logger.error(f"Error loading from zarr: {e}")
+            from qtpy.QtWidgets import QMessageBox
+            QMessageBox.critical(self, "Load Failed", f"Failed to load Zarr store:\n{str(e)}")
+
+    def local_write_to_zarr(self, data, path, chunks=True, compressor="default"):
+        """Fallback local implementation of write_to_zarr."""
+        if compressor == "default":
+            compressor = zarr.Blosc(cname="zstd", clevel=5, shuffle=zarr.Blosc.BITSHUFFLE)
+
+        if isinstance(data, (torch.Tensor, np.ndarray)):
+            if isinstance(data, torch.Tensor):
+                data = data.detach().cpu().numpy()
+            z = zarr.open(path, mode="w", shape=data.shape, dtype=data.dtype, 
+                          chunks=chunks, compressor=compressor)
+            z[:] = data
+        elif isinstance(data, dict):
+            store = zarr.DirectoryStore(path)
+            root = zarr.group(store=store, overwrite=True)
+            self.local_write_dict_to_zarr_group(root, data, chunks=chunks, compressor=compressor)
+        else:
+            raise TypeError(f"Unsupported data type for write_to_zarr: {type(data)}")
+
+    def local_write_dict_to_zarr_group(self, group, d, chunks=True, compressor=None):
+        """Fallback local implementation of write dict to zarr group."""
+        for k, v in d.items():
+            key = str(k)
+            if isinstance(v, dict):
+                subgroup = group.create_group(key)
+                self.local_write_dict_to_zarr_group(subgroup, v, chunks=chunks, compressor=compressor)
+            elif isinstance(v, (torch.Tensor, np.ndarray)):
+                if isinstance(v, torch.Tensor):
+                    v = v.detach().cpu().numpy()
+                group.array(key, v, chunks=chunks, compressor=compressor)
+            elif isinstance(v, (int, float, str, list, tuple)):
+                group.attrs[key] = v
+            else:
+                try:
+                    arr = np.array(v)
+                    group.array(key, arr, chunks=chunks, compressor=compressor)
+                except Exception:
+                    print(f"Warning: Could not save key {key} of type {type(v)} to Zarr.")
+
+    def local_load_zarr_to_dict(self, zarr_item):
+        """Recursively loads a Zarr group or array into standard nested Python dictionaries/arrays."""
+        if hasattr(zarr_item, "items"):
+            d = {}
+            for name, child in zarr_item.items():
+                d[name] = self.local_load_zarr_to_dict(child)
+            # Add attributes
+            if hasattr(zarr_item, "attrs"):
+                for attr_key, attr_val in zarr_item.attrs.items():
+                    d[attr_key] = attr_val
+            return d
+        elif hasattr(zarr_item, "shape") and hasattr(zarr_item, "dtype"):
+            return np.array(zarr_item)
+        else:
+            return zarr_item
 

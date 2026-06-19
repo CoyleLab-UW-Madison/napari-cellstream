@@ -1,5 +1,5 @@
 [project]
-name = "napari-cellstream"
+name = "napari_cellstream"
 version = "0.1.0"
 description = "Napari spectral analyzer for pixel-level cellstream diagnostics"
 authors = [{ name = "coylelab" }]
@@ -31,7 +31,7 @@ dependencies = [
 ]
 
 [project.entry-points."napari.manifest"]
-napari-cellstream = "napari_cellstream:napari.yaml"
+napari_cellstream = "napari_cellstream:napari.yaml"
 
 [build-system]
 requires = ["setuptools>=42", "wheel"]
@@ -42,4 +42,4 @@ packages = ["napari_cellstream"]
 include-package-data = true
 
 [tool.setuptools.package-data]
-"*" = ["*.yaml"]
+"napari_cellstream" = ["*.yaml"]
