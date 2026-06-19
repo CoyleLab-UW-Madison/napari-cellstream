@@ -1,1 +1,1 @@
-recursive-include napari_cellstream *.yaml *.py
+recursive-include napari_cellstream *.yaml *.py *.png

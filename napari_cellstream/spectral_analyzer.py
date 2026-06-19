@@ -14,7 +14,8 @@ import zarr
 from qtpy.QtWidgets import (QWidget, QVBoxLayout, QPushButton, QLabel, 
                            QComboBox, QSpinBox, QCheckBox, QHBoxLayout,
                            QGroupBox, QDoubleSpinBox, QFormLayout,QFileDialog,
-                           QScrollArea, QSplitter, QTreeWidget, QTreeWidgetItem)
+                           QScrollArea, QSplitter, QTreeWidget, QTreeWidgetItem,
+                           QFrame)
 
 from qtpy.QtCore import Qt
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
@@ -103,9 +104,13 @@ class SpectralWidget(QWidget):
         #fft widget 
         self.fft_gui = fft_gui_widget
         self.fft_gui.called.connect(self.handle_fft_result)
-        self.plot_container.layout().addWidget(self.fft_gui.native)
         
         fft_group = QGroupBox("     Generate FFT features")
+        fft_group.setCheckable(True)
+        fft_group.setChecked(False)
+        self.fft_gui.native.setVisible(False)
+        fft_group.toggled.connect(self.fft_gui.native.setVisible)
+        
         fft_layout = QVBoxLayout()
         fft_layout.addWidget(self.fft_gui.native)
         fft_group.setLayout(fft_layout)
@@ -116,9 +121,13 @@ class SpectralWidget(QWidget):
 
         #self.cwt_gui.wavelet_tuple=self.get_wavelet_tuple() ##fix this later
         self.cwt_gui.called.connect(self.handle_cwt_result)
-        self.plot_container.layout().addWidget(self.cwt_gui.native)
         
         cwt_group = QGroupBox("     Generate CWT features")
+        cwt_group.setCheckable(True)
+        cwt_group.setChecked(False)
+        self.cwt_gui.native.setVisible(False)
+        cwt_group.toggled.connect(self.cwt_gui.native.setVisible)
+        
         cwt_layout = QVBoxLayout()
         cwt_layout.addWidget(self.cwt_gui.native)
         cwt_group.setLayout(cwt_layout)
@@ -135,9 +144,11 @@ class SpectralWidget(QWidget):
         # Left column: Controls
         left_panel = QWidget()
         left_layout = QVBoxLayout()
+        left_layout.setAlignment(Qt.AlignTop)
         left_panel.setLayout(left_layout)
         
         left_layout.addWidget(self.load_button)
+        left_layout.addSpacing(32)
         left_layout.addWidget(self.controls_group)
         left_layout.addWidget(fft_group)
         left_layout.addWidget(cwt_group)
@@ -179,6 +190,8 @@ class SpectralWidget(QWidget):
 
         main = QWidget()
         main_layout = QVBoxLayout()
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(5)
         main.setLayout(main_layout)
         
         ### Top widget: two side-by-side panels
@@ -213,6 +226,21 @@ class SpectralWidget(QWidget):
         bottom_layout.addWidget(false_color_group, 1)
         bottom_layout.addWidget(downsample_group, 1)
         bottom_panel.setLayout(bottom_layout)
+
+        # Header banner: splash.png scaled to a fixed height, no width constraints
+        import os
+        from qtpy.QtGui import QPixmap
+        splash_path = os.path.join(os.path.dirname(__file__), "splash.png")
+        header_panel = QLabel()
+        header_panel.setAlignment(Qt.AlignCenter)
+        if os.path.exists(splash_path):
+            pixmap = QPixmap(splash_path)
+            scaled = pixmap.scaledToHeight(60, Qt.SmoothTransformation)
+            header_panel.setPixmap(scaled)
+            header_panel.setFixedHeight(60)
+        else:
+            header_panel.setText("cellstream: single-cell spectral analyzer")
+            header_panel.setStyleSheet("color: #00e676; font-weight: bold; font-size: 16px; padding: 8px; background: #1e1e1e;")
         
         ### Connect top and bottom widgets
         splitter = QSplitter(Qt.Vertical)
@@ -221,6 +249,7 @@ class SpectralWidget(QWidget):
         splitter.setSizes([550, 250])  
         
         #finalize and display layout
+        main_layout.addWidget(header_panel)
         main_layout.addWidget(splitter)
         self.setLayout(main_layout)
 
@@ -364,8 +393,15 @@ class SpectralWidget(QWidget):
     ###pixel inspector components
     def create_controls(self):
         """Create the parameter controls"""
-        self.controls_group = QGroupBox("     CWT Parameters")
-        controls_layout = QVBoxLayout()
+        self.controls_group = QGroupBox("     Spectrum Settings")
+        self.controls_group.setCheckable(True)
+        self.controls_group.setChecked(True)
+
+        # Inner content widget — toggled to show/hide just like FFT/CWT groups
+        controls_content = QWidget()
+        controls_content.setVisible(True)
+        self.controls_group.toggled.connect(controls_content.setVisible)
+        controls_layout = QVBoxLayout(controls_content)
         
         # Wavelet selector
         wavelet_layout = QHBoxLayout()
@@ -405,7 +441,10 @@ class SpectralWidget(QWidget):
         self.refresh_button.clicked.connect(self.refresh_plots)
         controls_layout.addWidget(self.refresh_button)
         
-        self.controls_group.setLayout(controls_layout)
+        # Wrap content widget in the group's own layout
+        group_layout = QVBoxLayout()
+        group_layout.addWidget(controls_content)
+        self.controls_group.setLayout(group_layout)
     
     def create_wavelet_params_controls(self):
         """Create controls for the current wavelet's parameters"""

@@ -42,4 +42,4 @@ packages = ["napari_cellstream"]
 include-package-data = true
 
 [tool.setuptools.package-data]
-"napari_cellstream" = ["*.yaml"]
+"napari_cellstream" = ["*.yaml", "*.png"]
