@@ -23,6 +23,8 @@ A napari spectral analyzer for pixel-level cellstream diagnostics. This plugin p
 - **False-Color Spectrum:** Visualize spectral axes (time, frequency, or scale) using color-coded projections.
 - **Downsampling:** Efficiently downsample large datasets in time or space for faster processing and visualization.
 
+### 4. Zarr-based results I/O 
+
 ---
 
 ## Installation
@@ -51,6 +53,8 @@ To enable GPU acceleration, ensure you have `torch` installed with CUDA support 
    - `Shift + Click` on the image to view the spectral analysis in the sidebar.
 4. **Generate Features:**
    - Use the **Generate FFT features** or **Generate CWT features** sections to create new image layers based on spectral analysis.
+5. Zarr-based saving/loading of results
+   - Use the zarr-store widget section to manage results
 
 ---
 
