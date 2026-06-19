@@ -175,8 +175,7 @@ class SpectralWidget(QWidget):
         splitter = QSplitter(Qt.Horizontal)
         splitter.addWidget(scroll_area)
         splitter.addWidget(self.plot_container)
-        splitter.addWidget(self.results_panel)
-        splitter.setSizes([250, 450, 300])  
+        splitter.setSizes([300, 300])  
 
         main = QWidget()
         main_layout = QVBoxLayout()
@@ -194,7 +193,7 @@ class SpectralWidget(QWidget):
         bottom_layout = QHBoxLayout()
         
         #False color widget
-        false_color_group = QGroupBox("  False-color spectrum")
+        false_color_group = QGroupBox("  False-color")
         self.false_color_gui = false_color_widget
         self.false_color_gui.called.connect(self.handle_false_color_result)
         false_color_layout = QVBoxLayout()
@@ -202,7 +201,7 @@ class SpectralWidget(QWidget):
         false_color_group.setLayout(false_color_layout)
         
         #Downsample widget
-        downsample_group = QGroupBox("  Downsample image")
+        downsample_group = QGroupBox("  Downsample")
         self.downsample_gui = downsample_gui_widget
         self.downsample_gui.called.connect(self.handle_downsample_result)
         downsample_layout = QVBoxLayout()
@@ -210,15 +209,16 @@ class SpectralWidget(QWidget):
         downsample_group.setLayout(downsample_layout)
 
         #Add widgets to bottom panel
-        bottom_layout.addWidget(false_color_group)
-        bottom_layout.addWidget(downsample_group)
+        bottom_layout.addWidget(self.results_panel, 2)
+        bottom_layout.addWidget(false_color_group, 1)
+        bottom_layout.addWidget(downsample_group, 1)
         bottom_panel.setLayout(bottom_layout)
         
         ### Connect top and bottom widgets
         splitter = QSplitter(Qt.Vertical)
         splitter.addWidget(top_widget)
         splitter.addWidget(bottom_panel)
-        splitter.setSizes([800, 25])  
+        splitter.setSizes([550, 250])  
         
         #finalize and display layout
         main_layout.addWidget(splitter)
