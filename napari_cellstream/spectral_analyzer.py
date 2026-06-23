@@ -898,14 +898,22 @@ class SpectralWidget(QWidget):
         if hasattr(zarr_item, "items"):
             d = {}
             for name, child in zarr_item.items():
+                # Protect against pulling virtual keys if the item is a custom wrapper
+                if name == "_attrs":
+                    continue
                 d[name] = self.local_load_zarr_to_dict(child)
-            # Add attributes
-            if hasattr(zarr_item, "attrs"):
+            
+            # Group all attributes into a single nested dictionary
+            if hasattr(zarr_item, "attrs") and len(zarr_item.attrs) > 0:
+                d["_attrs"] = {}
                 for attr_key, attr_val in zarr_item.attrs.items():
-                    d[attr_key] = attr_val
+                    d["_attrs"][attr_key] = attr_val
+                    
             return d
+            
         elif hasattr(zarr_item, "shape") and hasattr(zarr_item, "dtype"):
-            return np.array(zarr_item)
+            # Ensure we wrap the read safely across versions
+            return np.asarray(zarr_item[:])
         else:
             return zarr_item
 
