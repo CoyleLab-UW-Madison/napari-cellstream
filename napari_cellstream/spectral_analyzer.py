@@ -19,6 +19,7 @@ from qtpy.QtWidgets import (QWidget, QVBoxLayout, QPushButton, QLabel,
 
 from qtpy.QtCore import Qt
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.figure import Figure
 from qtpy.QtWidgets import QSizePolicy
 
@@ -69,6 +70,12 @@ class SpectralWidget(QWidget):
         #timelines
         self.current_time_index = 0
         self.time_cursor_lines = []
+        self.spectrogram_images = []
+        self.cwt_magnitudes = []
+        self.toolbar = None
+        self._axes = None
+        self._n_channels = 0
+        self._linking = False
         self.viewer.dims.events.current_step.connect(self.update_time_cursor) #time line
         self.last_update_time = 0  # store time of last update
         self.update_interval = .25  # seconds (5 Hz)
@@ -436,6 +443,39 @@ class SpectralWidget(QWidget):
         self.zscore_check.stateChanged.connect(self.zscore_changed)
         controls_layout.addWidget(self.zscore_check)
         
+        # Spectrogram contrast controls
+        contrast_group = QGroupBox("Spectrogram Contrast")
+        contrast_layout_inner = QVBoxLayout()
+        
+        mode_layout = QHBoxLayout()
+        mode_layout.addWidget(QLabel("Mode:"))
+        self.contrast_combo = QComboBox()
+        self.contrast_combo.addItems(["Auto", "Robust (2-98%)", "Moderate (10-90%)", "Tight (25-75%)", "Manual"])
+        self.contrast_combo.currentTextChanged.connect(self.contrast_mode_changed)
+        mode_layout.addWidget(self.contrast_combo)
+        contrast_layout_inner.addLayout(mode_layout)
+        
+        self.manual_contrast_widget = QWidget()
+        manual_layout = QFormLayout()
+        self.vmin_spin = QDoubleSpinBox()
+        self.vmin_spin.setRange(-1e6, 1e6)
+        self.vmin_spin.setDecimals(3)
+        self.vmin_spin.setValue(0.0)
+        self.vmin_spin.valueChanged.connect(self.apply_manual_contrast)
+        self.vmax_spin = QDoubleSpinBox()
+        self.vmax_spin.setRange(-1e6, 1e6)
+        self.vmax_spin.setDecimals(3)
+        self.vmax_spin.setValue(1.0)
+        self.vmax_spin.valueChanged.connect(self.apply_manual_contrast)
+        manual_layout.addRow("vmin:", self.vmin_spin)
+        manual_layout.addRow("vmax:", self.vmax_spin)
+        self.manual_contrast_widget.setLayout(manual_layout)
+        self.manual_contrast_widget.setVisible(False)
+        contrast_layout_inner.addWidget(self.manual_contrast_widget)
+        
+        contrast_group.setLayout(contrast_layout_inner)
+        controls_layout.addWidget(contrast_group)
+        
         # Refresh button
         self.refresh_button = QPushButton("Refresh Plots")
         self.refresh_button.clicked.connect(self.refresh_plots)
@@ -503,6 +543,69 @@ class SpectralWidget(QWidget):
         self.do_plot_zscore = (state == 2)  # 2 is checked
         self.refresh_plots()
         self.propagate_wavelet_params_to_cwt_widget()
+    
+    def contrast_mode_changed(self, mode):
+        """Handle contrast mode combo box changes."""
+        self.contrast_mode = mode
+        self.manual_contrast_widget.setVisible(mode == "Manual")
+        self.apply_contrast_from_mode()
+    
+    def apply_contrast_from_mode(self):
+        """Apply contrast limits to spectrograms based on current mode."""
+        if not self.spectrogram_images or not self.cwt_magnitudes:
+            return
+        
+        mode = self.contrast_combo.currentText()
+        
+        for im, cwt_mag in zip(self.spectrogram_images, self.cwt_magnitudes):
+            if mode == "Auto":
+                vmin, vmax = np.nanmin(cwt_mag), np.nanmax(cwt_mag)
+            elif mode == "Robust (2-98%)":
+                vmin, vmax = np.nanpercentile(cwt_mag, [2, 98])
+            elif mode == "Moderate (10-90%)":
+                vmin, vmax = np.nanpercentile(cwt_mag, [10, 90])
+            elif mode == "Tight (25-75%)":
+                vmin, vmax = np.nanpercentile(cwt_mag, [25, 75])
+            elif mode == "Manual":
+                vmin = self.vmin_spin.value()
+                vmax = self.vmax_spin.value()
+            else:
+                return
+            
+            im.set_clim(vmin, vmax)
+        
+        # Update manual spinboxes to reflect current values (for non-manual modes)
+        if mode != "Manual" and self.cwt_magnitudes:
+            self.vmin_spin.blockSignals(True)
+            self.vmax_spin.blockSignals(True)
+            self.vmin_spin.setValue(vmin)
+            self.vmax_spin.setValue(vmax)
+            self.vmin_spin.blockSignals(False)
+            self.vmax_spin.blockSignals(False)
+        
+        if self.canvas:
+            self.canvas.draw_idle()
+    
+    def apply_manual_contrast(self):
+        """Apply manually specified contrast limits."""
+        if self.contrast_combo.currentText() != "Manual":
+            return
+        self.apply_contrast_from_mode()
+    
+    def _on_xlim_changed(self, changed_ax):
+        """Sync x-limits across linked time-domain and CWT axes."""
+        if self._linking or self._axes is None:
+            return
+        self._linking = True
+        try:
+            xlim = changed_ax.get_xlim()
+            for c in range(self._n_channels):
+                for row in [0, 2]:  # time-domain and CWT rows
+                    ax = self._axes[row, c]
+                    if ax is not changed_ax:
+                        ax.set_xlim(xlim)
+        finally:
+            self._linking = False
     
     def refresh_plots(self):
         """Refresh plots with current settings"""
@@ -586,8 +689,18 @@ class SpectralWidget(QWidget):
             logger.warning(f"Coordinates out of bounds: ({x}, {y})")
             return
             
-        # Clear previous plot
+        # Clear tracking lists (fixes memory leak of orphaned Line2D references)
+        self.time_cursor_lines = []
+        self.spectrogram_images = []
+        self.cwt_magnitudes = []
+        self._axes = None
+        
+        # Clear previous plot and toolbar
         if self.canvas:
+            if self.toolbar:
+                self.plot_container.layout().removeWidget(self.toolbar)
+                self.toolbar.deleteLater()
+                self.toolbar = None
             self.plot_container.layout().removeWidget(self.canvas)
             self.canvas.deleteLater()
             self.canvas = None
@@ -598,6 +711,10 @@ class SpectralWidget(QWidget):
         self.canvas = FigureCanvas(fig)
         self.canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding) #dynamic layout
         self.plot_container.layout().addWidget(self.canvas)
+        
+        # Add navigation toolbar for interactive zoom/pan
+        self.toolbar = NavigationToolbar(self.canvas, self.plot_container)
+        self.plot_container.layout().addWidget(self.toolbar)
         
         # Create subplots: 3 rows (time, FFT, CWT) x C columns
         if C > 1:
@@ -665,6 +782,8 @@ class SpectralWidget(QWidget):
            
             logger.debug("Finalizing plots...")
             im = ax.imshow(cwt_mag, aspect='auto', origin='lower', cmap='viridis')
+            self.spectrogram_images.append(im)
+            self.cwt_magnitudes.append(cwt_mag)
             ax.set_title(f"CWT: {wavelet_tuple[0]}")
             ax.set_xlabel("Time")
             ax.set_ylabel("Scale")
@@ -673,6 +792,16 @@ class SpectralWidget(QWidget):
             self.time_cursor_lines.append(cursor)
             
             #fig.colorbar(im, ax=ax)
+        
+        # Store axes reference and link time/CWT x-axes across channels
+        self._axes = axes
+        self._n_channels = C
+        for c in range(C):
+            for row in [0, 2]:  # time-domain and CWT rows share time axis
+                axes[row, c].callbacks.connect('xlim_changed', self._on_xlim_changed)
+        
+        # Apply current contrast settings to spectrograms
+        self.apply_contrast_from_mode()
             
         fig.tight_layout()
         self.canvas.draw()
