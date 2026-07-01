@@ -17,7 +17,7 @@ from qtpy.QtWidgets import (QWidget, QVBoxLayout, QPushButton, QLabel,
                            QScrollArea, QSplitter, QTreeWidget, QTreeWidgetItem,
                            QFrame)
 
-from qtpy.QtCore import Qt
+from qtpy.QtCore import Qt, Signal
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.figure import Figure
@@ -450,31 +450,36 @@ class SpectralWidget(QWidget):
         mode_layout = QHBoxLayout()
         mode_layout.addWidget(QLabel("Mode:"))
         self.contrast_combo = QComboBox()
-        self.contrast_combo.addItems(["Auto", "Robust (2-98%)", "Moderate (10-90%)", "Tight (25-75%)", "Manual"])
+        self.contrast_combo.addItems(["Auto", "Manual"])
         self.contrast_combo.currentTextChanged.connect(self.contrast_mode_changed)
         mode_layout.addWidget(self.contrast_combo)
         contrast_layout_inner.addLayout(mode_layout)
         
-        self.manual_contrast_widget = QWidget()
-        manual_layout = QFormLayout()
-        self.vmin_spin = QDoubleSpinBox()
-        self.vmin_spin.setRange(-1e6, 1e6)
-        self.vmin_spin.setDecimals(3)
-        self.vmin_spin.setValue(0.0)
-        self.vmin_spin.valueChanged.connect(self.apply_manual_contrast)
-        self.vmax_spin = QDoubleSpinBox()
-        self.vmax_spin.setRange(-1e6, 1e6)
-        self.vmax_spin.setDecimals(3)
-        self.vmax_spin.setValue(1.0)
-        self.vmax_spin.valueChanged.connect(self.apply_manual_contrast)
-        manual_layout.addRow("vmin:", self.vmin_spin)
-        manual_layout.addRow("vmax:", self.vmax_spin)
-        self.manual_contrast_widget.setLayout(manual_layout)
-        self.manual_contrast_widget.setVisible(False)
-        contrast_layout_inner.addWidget(self.manual_contrast_widget)
+        # Dual-handle range slider (like napari contrast limits)
+        from superqt import QDoubleRangeSlider
+        self.contrast_slider_widget = QWidget()
+        slider_layout = QVBoxLayout()
+        slider_layout.setContentsMargins(0, 0, 0, 0)
+        self.contrast_slider = QDoubleRangeSlider(Qt.Horizontal)
+        self.contrast_slider.setRange(0, 1)
+        self.contrast_slider.setValue((0, 1))
+        self.contrast_slider.valueChanged.connect(self._on_contrast_slider_changed)
+        slider_layout.addWidget(self.contrast_slider)
+        self.contrast_limits_label = QLabel("0.000 – 1.000")
+        self.contrast_limits_label.setStyleSheet("font-size: 10px; color: #aaa;")
+        slider_layout.addWidget(self.contrast_limits_label)
+        self.contrast_slider_widget.setLayout(slider_layout)
+        self.contrast_slider_widget.setVisible(False)
+        contrast_layout_inner.addWidget(self.contrast_slider_widget)
         
         contrast_group.setLayout(contrast_layout_inner)
         controls_layout.addWidget(contrast_group)
+        
+        # Time cursor tracking toggle
+        self.track_cursor_check = QCheckBox("Track Playback Cursor")
+        self.track_cursor_check.setChecked(True)
+        self.track_cursor_check.setToolTip("Uncheck to disable plot redraws while scrubbing the movie")
+        controls_layout.addWidget(self.track_cursor_check)
         
         # Refresh button
         self.refresh_button = QPushButton("Refresh Plots")
@@ -547,7 +552,20 @@ class SpectralWidget(QWidget):
     def contrast_mode_changed(self, mode):
         """Handle contrast mode combo box changes."""
         self.contrast_mode = mode
-        self.manual_contrast_widget.setVisible(mode == "Manual")
+        self.contrast_slider_widget.setVisible(mode == "Manual")
+        if mode == "Manual" and self.cwt_magnitudes:
+            # Initialize slider range with generous padding so user can
+            # drag handles beyond the current data range
+            all_min = min(np.nanmin(m) for m in self.cwt_magnitudes)
+            all_max = max(np.nanmax(m) for m in self.cwt_magnitudes)
+            span = all_max - all_min if all_max > all_min else 1.0
+            padded_min = all_min - 0.5 * span
+            padded_max = all_max + 0.5 * span
+            self.contrast_slider.blockSignals(True)
+            self.contrast_slider.setRange(padded_min, padded_max)
+            self.contrast_slider.setValue((all_min, all_max))
+            self.contrast_slider.blockSignals(False)
+            self._update_contrast_label(all_min, all_max)
         self.apply_contrast_from_mode()
     
     def apply_contrast_from_mode(self):
@@ -557,50 +575,71 @@ class SpectralWidget(QWidget):
         
         mode = self.contrast_combo.currentText()
         
+        if mode == "Manual":
+            # Expand slider range if new data exceeds current bounds,
+            # but do NOT move the handles — preserves user's chosen contrast
+            all_min = min(np.nanmin(m) for m in self.cwt_magnitudes)
+            all_max = max(np.nanmax(m) for m in self.cwt_magnitudes)
+            span = all_max - all_min if all_max > all_min else 1.0
+            range_min = min(self.contrast_slider.minimum(), all_min - 0.5 * span)
+            range_max = max(self.contrast_slider.maximum(), all_max + 0.5 * span)
+            self.contrast_slider.blockSignals(True)
+            self.contrast_slider.setRange(range_min, range_max)
+            self.contrast_slider.blockSignals(False)
+            vmin, vmax = self.contrast_slider.value()
+        
         for im, cwt_mag in zip(self.spectrogram_images, self.cwt_magnitudes):
             if mode == "Auto":
-                vmin, vmax = np.nanmin(cwt_mag), np.nanmax(cwt_mag)
-            elif mode == "Robust (2-98%)":
-                vmin, vmax = np.nanpercentile(cwt_mag, [2, 98])
-            elif mode == "Moderate (10-90%)":
-                vmin, vmax = np.nanpercentile(cwt_mag, [10, 90])
-            elif mode == "Tight (25-75%)":
-                vmin, vmax = np.nanpercentile(cwt_mag, [25, 75])
+                v0, v1 = np.nanmin(cwt_mag), np.nanmax(cwt_mag)
             elif mode == "Manual":
-                vmin = self.vmin_spin.value()
-                vmax = self.vmax_spin.value()
+                v0, v1 = vmin, vmax
             else:
                 return
-            
-            im.set_clim(vmin, vmax)
-        
-        # Update manual spinboxes to reflect current values (for non-manual modes)
-        if mode != "Manual" and self.cwt_magnitudes:
-            self.vmin_spin.blockSignals(True)
-            self.vmax_spin.blockSignals(True)
-            self.vmin_spin.setValue(vmin)
-            self.vmax_spin.setValue(vmax)
-            self.vmin_spin.blockSignals(False)
-            self.vmax_spin.blockSignals(False)
+            im.set_clim(v0, v1)
         
         if self.canvas:
             self.canvas.draw_idle()
     
-    def apply_manual_contrast(self):
-        """Apply manually specified contrast limits."""
-        if self.contrast_combo.currentText() != "Manual":
-            return
-        self.apply_contrast_from_mode()
+    def _on_contrast_slider_changed(self, value):
+        """Handle contrast range slider value changes."""
+        vmin, vmax = value
+        self._update_contrast_label(vmin, vmax)
+        if self.contrast_combo.currentText() == "Manual":
+            self.apply_contrast_from_mode()
+    
+    def _update_contrast_label(self, vmin, vmax):
+        """Update the label showing current contrast limits."""
+        self.contrast_limits_label.setText(f"{vmin:.3f} \u2013 {vmax:.3f}")
     
     def _on_xlim_changed(self, changed_ax):
-        """Sync x-limits across linked time-domain and CWT axes."""
+        """Sync x-limits across linked axes (same row across channels, plus time\u2194CWT)."""
         if self._linking or self._axes is None:
             return
         self._linking = True
         try:
             xlim = changed_ax.get_xlim()
+            # Find which row the changed axis belongs to
+            changed_row = None
+            for r in range(3):
+                for c in range(self._n_channels):
+                    if self._axes[r, c] is changed_ax:
+                        changed_row = r
+                        break
+                if changed_row is not None:
+                    break
+            
+            if changed_row is None:
+                return
+            
+            # Time-domain (row 0) and CWT (row 2) share the time axis;
+            # FFT (row 1) links only across channels within its own row
+            if changed_row in (0, 2):
+                sync_rows = [0, 2]
+            else:
+                sync_rows = [1]
+            
             for c in range(self._n_channels):
-                for row in [0, 2]:  # time-domain and CWT rows
+                for row in sync_rows:
                     ax = self._axes[row, c]
                     if ax is not changed_ax:
                         ax.set_xlim(xlim)
@@ -635,6 +674,10 @@ class SpectralWidget(QWidget):
 
     def update_time_cursor(self, event=None):
         if self.canvas is None or not hasattr(self, "time_cursor_lines"):
+            return
+        
+        # Skip redraws if tracking is disabled
+        if not self.track_cursor_check.isChecked():
             return
         
         now=time.time()
@@ -797,7 +840,7 @@ class SpectralWidget(QWidget):
         self._axes = axes
         self._n_channels = C
         for c in range(C):
-            for row in [0, 2]:  # time-domain and CWT rows share time axis
+            for row in range(3):  # all rows: time, FFT, CWT — linked across channels
                 axes[row, c].callbacks.connect('xlim_changed', self._on_xlim_changed)
         
         # Apply current contrast settings to spectrograms
