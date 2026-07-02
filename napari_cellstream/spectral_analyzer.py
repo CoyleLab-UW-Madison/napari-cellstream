@@ -56,6 +56,18 @@ WAVELET_PARAMS = {
     'hhhat': { "mu": (5,0,1000,1)
             }}
 
+class AspectRatioPixmapLabel(QLabel):
+    def __init__(self, pixmap, parent=None):
+        super().__init__(parent)
+        self.setAlignment(Qt.AlignCenter)
+        self.setMinimumSize(1, 1)
+        self._pixmap = pixmap
+
+    def resizeEvent(self, event):
+        if not self._pixmap.isNull():
+            super().resizeEvent(event)
+            self.setPixmap(self._pixmap.scaled(self.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+
 class SpectralWidget(QWidget):
     def __init__(self, napari_viewer,use_gpu=False):
         super().__init__()
@@ -106,7 +118,7 @@ class SpectralWidget(QWidget):
         # Plot container
         self.plot_container = QWidget()
         self.plot_container.setLayout(QVBoxLayout())
-        #self.plot_container.setMinimumSize(50, 50)
+        self.plot_container.setMinimumWidth(100)
         
         #fft widget 
         self.fft_gui = fft_gui_widget
@@ -162,6 +174,7 @@ class SpectralWidget(QWidget):
         
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
+        scroll_area.setMinimumWidth(100)
         scroll_area.setWidget(left_panel)
 
         # Right column: Results History Tree
@@ -233,19 +246,21 @@ class SpectralWidget(QWidget):
         bottom_layout.addWidget(false_color_group, 1)
         bottom_layout.addWidget(downsample_group, 1)
         bottom_panel.setLayout(bottom_layout)
+        bottom_panel.setMinimumWidth(100)
 
-        # Header banner: splash.png scaled to a fixed height, no width constraints
+        # Header banner: splash.png scaled to a fixed height, maintaining aspect ratio
         import os
         from qtpy.QtGui import QPixmap
         splash_path = os.path.join(os.path.dirname(__file__), "splash.png")
-        header_panel = QLabel()
-        header_panel.setAlignment(Qt.AlignCenter)
         if os.path.exists(splash_path):
             pixmap = QPixmap(splash_path)
+            # Pre-scale to 60px height to avoid using massive original image dynamically
             scaled = pixmap.scaledToHeight(60, Qt.SmoothTransformation)
-            header_panel.setPixmap(scaled)
+            header_panel = AspectRatioPixmapLabel(scaled)
             header_panel.setFixedHeight(60)
         else:
+            header_panel = QLabel()
+            header_panel.setAlignment(Qt.AlignCenter)
             header_panel.setText("cellstream: single-cell spectral analyzer")
             header_panel.setStyleSheet("color: #00e676; font-weight: bold; font-size: 16px; padding: 8px; background: #1e1e1e;")
         
@@ -259,6 +274,7 @@ class SpectralWidget(QWidget):
         main_layout.addWidget(header_panel)
         main_layout.addWidget(splitter)
         self.setLayout(main_layout)
+        self.setMinimumWidth(150)
 
         #initialize connections
         self.toggle_activation(True)
@@ -320,6 +336,8 @@ class SpectralWidget(QWidget):
         self.results_dict[id(root_item)] = result
 
         for key, data in result.items():
+            if key == '_attrs':
+                continue
             name = f"FFT_{key}"
             if isinstance(data, torch.Tensor):
                 data = data.cpu().numpy()
@@ -348,7 +366,9 @@ class SpectralWidget(QWidget):
 
         #reorganize spectra
         consolidated = {}
-        for ch_data in results.values():
+        for channel_key, ch_data in results.items():
+            if channel_key == '_attrs':
+                continue
             for key, arr in ch_data.items():
                 if key not in consolidated:
                     consolidated[key] = []
